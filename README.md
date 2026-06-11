@@ -2,6 +2,10 @@
 
 Identifies Bitcoin market regimes (Bull, Bear, Sideways, High Volatility) from daily OHLCV data using unsupervised machine learning.
 
+## Dataset
+
+https://www.kaggle.com/code/taihungg/market-regime-detection?select=coin_Bitcoin.csv
+
 ## Setup
 
 Figure it out yourself
