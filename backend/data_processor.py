@@ -66,7 +66,7 @@ def process_uploaded(raw_df: pd.DataFrame, detection: dict, window: int = 7):
         unit = "ms" if detection.get("is_unix_ms") else "s"
         df["Date"] = pd.to_datetime(df["Date"], unit=unit, utc=True).dt.tz_localize(None)
     else:
-        df["Date"] = pd.to_datetime(df["Date"], infer_datetime_format=True)
+        df["Date"] = pd.to_datetime(df["Date"])
 
     df = df.sort_values("Date").reset_index(drop=True)
     df = df.dropna(subset=["Close"])
