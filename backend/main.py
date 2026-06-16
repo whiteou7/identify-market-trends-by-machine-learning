@@ -17,7 +17,7 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------------------------
-# In-memory store for uploaded dataset (single-user / demo app)
+# Lưu trữ trong bộ nhớ cho dataset đã tải lên (ứng dụng đơn người dùng / demo)
 # ---------------------------------------------------------------------------
 _upload: dict = {
     "raw_df": None,
@@ -29,13 +29,15 @@ _upload: dict = {
 
 
 def _get_data(use_uploaded: bool, window: int):
+    """Trả về (df, X_scaled, feature_cols, scaler), chuyển hướng đến dataset đã tải lên
+    khi có dataset và use_uploaded là True, ngược lại dùng CSV mặc định."""
     if use_uploaded and _upload["raw_df"] is not None:
         return process_uploaded(_upload["raw_df"], _upload["detection"], window)
     return load_and_process(window)
 
 
 # ---------------------------------------------------------------------------
-# Health
+# Kiểm tra trạng thái
 # ---------------------------------------------------------------------------
 
 @app.get("/api/health")
@@ -44,12 +46,12 @@ def health():
 
 
 # ---------------------------------------------------------------------------
-# Dataset upload
+# Tải lên dataset
 # ---------------------------------------------------------------------------
 
 @app.get("/api/upload/info")
 def get_upload_info():
-    """Returns current upload state (used by frontend on page load)."""
+    """Trả về trạng thái tải lên hiện tại (frontend gọi khi tải trang)."""
     if _upload["raw_df"] is None:
         return {"has_upload": False}
     return {
@@ -71,6 +73,7 @@ async def upload_dataset(file: UploadFile = File(...)):
         raise HTTPException(400, "Only CSV files are supported.")
 
     content = await file.read()
+    # Giới hạn 500 MB để kiểm soát bộ nhớ; CSV BTC 1 phút toàn bộ lịch sử khoảng ~300 MB.
     if len(content) > 500 * 1024 * 1024:
         raise HTTPException(413, "File too large. Maximum size is 500 MB.")
 
@@ -83,6 +86,7 @@ async def upload_dataset(file: UploadFile = File(...)):
         raise HTTPException(422, "CSV file is empty.")
 
     detection = detect_columns(raw_df)
+    # Giới hạn xem trước 12 cột để thông báo lỗi dễ đọc trên giao diện.
     col_list = ", ".join(raw_df.columns[:12].tolist())
 
     if detection["date_col"] is None:
@@ -103,6 +107,8 @@ async def upload_dataset(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(422, f"Failed to process dataset: {e}")
 
+    # 30 hàng ngày là tối thiểu để cửa sổ rolling volatility có ý nghĩa và
+    # đủ phương sai để tính điểm silhouette với ít nhất k=2 cụm.
     if len(df) < 30:
         raise HTTPException(
             422,
@@ -142,29 +148,29 @@ def clear_upload():
 
 
 # ---------------------------------------------------------------------------
-# Analysis endpoints
+# Endpoint phân tích
 # ---------------------------------------------------------------------------
 
 @app.get("/api/elbow")
 def get_elbow(k_max: int = 10, window: int = 7, use_uploaded: bool = False):
-    """Phase 2: Elbow Method + Silhouette for K selection."""
+    """Giai đoạn 2: Phương pháp Elbow + Silhouette để chọn K."""
     _, X, _, _ = _get_data(use_uploaded, window)
     return {"data": find_optimal_k(X, k_max=k_max)}
 
 
 @app.get("/api/analysis")
 def get_analysis(k: int = 4, model: str = "kmeans", window: int = 7, use_uploaded: bool = False):
-    """Phases 3-5: train model, interpret clusters, return all visualisation data."""
+    """Giai đoạn 3-5: huấn luyện mô hình, diễn giải cụm, trả về toàn bộ dữ liệu hiển thị."""
     df, X, _, scaler = _get_data(use_uploaded, window)
 
     if model == "gmm":
-        labels, centroids, cluster_names, sil, _, X_pca = run_gmm(X, k, scaler)
+        labels, _, cluster_names, sil, _, X_pca = run_gmm(X, k, scaler)
         extra: dict = {}
     else:
-        labels, centroids, cluster_names, sil, inertia, X_pca = run_kmeans(X, k, scaler)
+        labels, _, cluster_names, sil, inertia, X_pca = run_kmeans(X, k, scaler)
         extra = {"inertia": inertia}
 
-    # Per-day price data with cluster assignment
+    # Dữ liệu giá theo ngày kèm nhãn cụm
     price_data = []
     for i, (_, row) in enumerate(df.iterrows()):
         cid = int(labels[i])
@@ -178,7 +184,7 @@ def get_analysis(k: int = 4, model: str = "kmeans", window: int = 7, use_uploade
             "momentum": float(row["momentum"]),
         })
 
-    # Contiguous regime regions for background colouring
+    # Vùng chế độ liên tiếp để tô màu nền biểu đồ
     regions: list[dict] = []
     if len(labels) > 0:
         cur = int(labels[0])
@@ -200,7 +206,7 @@ def get_analysis(k: int = 4, model: str = "kmeans", window: int = 7, use_uploade
             "cluster_name": cluster_names[cur],
         })
 
-    # PCA 2D scatter
+    # Biểu đồ phân tán PCA 2D
     pca_data = [
         {
             "x": float(X_pca[i, 0]),
@@ -212,7 +218,7 @@ def get_analysis(k: int = 4, model: str = "kmeans", window: int = 7, use_uploade
         for i in range(len(X_pca))
     ]
 
-    # Phase 4: cluster statistics
+    # Giai đoạn 4: thống kê cụm
     cluster_stats = []
     for cid, cname in sorted(cluster_names.items()):
         mask = labels == cid
